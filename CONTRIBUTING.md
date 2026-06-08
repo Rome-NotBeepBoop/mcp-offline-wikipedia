@@ -27,4 +27,3 @@ If you want to write code and submit a Pull Request (PR):
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
