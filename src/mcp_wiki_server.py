@@ -8,7 +8,6 @@ from libzim.search import Query, Searcher
 from libzim.suggestion import SuggestionSearcher
 
 # Configure logging to write to stderr.
-# WARNING: MCP uses stdout for JSON-RPC protocol communication. Never print or log to stdout.
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -19,33 +18,35 @@ logger = logging.getLogger("offline-wiki-mcp")
 # Initialize FastMCP Server
 mcp = FastMCP("Offline Wikipedia")
 
-# Read the .zim file path from environment variables
+# Read settings from environment variables with safe defaults
 ZIM_PATH = os.environ.get("WIKI_ZIM_PATH")
+MAX_ARTICLE_CHARS = int(os.environ.get("WIKI_MAX_CHARS", 15000))  # Customizable via env
 
-# Protect LLM context windows by truncating excessively long articles
-MAX_ARTICLE_CHARS = 15000
-
-# Thread-safe global reference to avoid re-opening the archive on every tool call
+# Thread-safe global reference
 _archive = None
 
 
 def get_archive() -> Archive:
-    """Lazily loads and returns the ZIM archive instance."""
+    """Returns the globally loaded ZIM archive instance."""
     global _archive
     if _archive is None:
-        if not ZIM_PATH:
-            logger.error("WIKI_ZIM_PATH environment variable is missing.")
-            raise ValueError(
-                "WIKI_ZIM_PATH environment variable is missing. "
-                "Please configure it in your LM Studio/MCP client configuration file."
-            )
-        if not os.path.exists(ZIM_PATH):
-            logger.error(f"ZIM archive file not found at: {ZIM_PATH}")
-            raise FileNotFoundError(f"ZIM archive file not found at: {ZIM_PATH}")
-
+        validate_environment()
         logger.info(f"Loading ZIM archive into memory: {ZIM_PATH}")
         _archive = Archive(ZIM_PATH)
     return _archive
+
+
+def validate_environment():
+    """Validates environment setup immediately to catch configuration mistakes early."""
+    if not ZIM_PATH:
+        logger.error("WIKI_ZIM_PATH environment variable is completely missing.")
+        raise ValueError(
+            "WIKI_ZIM_PATH environment variable is missing. "
+            "Please configure it in your MCP client settings file."
+        )
+    if not os.path.exists(ZIM_PATH):
+        logger.error(f"ZIM archive file not found at path: {ZIM_PATH}")
+        raise FileNotFoundError(f"ZIM archive file not found at: {ZIM_PATH}")
 
 
 @mcp.tool()
@@ -117,7 +118,7 @@ def search_offline_wiki(query: str) -> str:
 
         raw_text = soup.get_text(separator="\n")
 
-        # Normalize text: strip trailing spaces and clear excess empty lines
+        # Normalize text
         lines = (line.strip() for line in raw_text.splitlines())
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         clean_text = "\n".join(chunk for chunk in chunks if chunk)
@@ -140,5 +141,12 @@ def search_offline_wiki(query: str) -> str:
 
 if __name__ == "__main__":
     logger.info("Starting Offline Wikipedia MCP Server...")
-    # Run the server utilizing standard input/output (stdio) transport
+
+    # Fail fast if environment is misconfigured before running the standard I/O loop
+    try:
+        validate_environment()
+    except Exception as env_err:
+        logger.critical(f"Initialization failure: {env_err}")
+        sys.exit(1)
+
     mcp.run()
