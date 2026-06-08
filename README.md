@@ -91,10 +91,20 @@ Add the following to your Cursor MCP config (`.cursor/mcp.json` in your project,
 
 ### LM Studio
 
-In LM Studio, go to **Developer → MCP Servers → Add Server** and fill in:
-- **Command:** `/absolute/path/to/venv/bin/python`
-- **Args:** `/absolute/path/to/mcp_wiki_server.py`
-- **Env:** `WIKI_ZIM_PATH=/absolute/path/to/wikipedia.zim`
+In LM Studio, go to **Developer → mcp.json →** and fill in:
+```bash {
+  "mcpServers": {
+    "offline-wikipedia": {
+      "command": "/absolute/path/to/mcp-offline-wikipedia/.venv/bin/python",
+      "args": ["/absolute/path/to/mcp-offline-wikipedia/src/mcp_wiki_server.py"],
+      "env": {
+        "WIKI_ZIM_PATH": "/absolute/path/to/your/wikipedia.zim",
+        "WIKI_MAX_CHARS": "15000"
+      }
+    }
+  }
+}
+```
 
 ## 🌍 Environment Variables
 
