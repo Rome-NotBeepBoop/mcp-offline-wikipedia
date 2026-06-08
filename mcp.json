@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "offline-wikipedia": {
+      "command": "/absolute/path/to/mcp-offline-wikipedia/venv/bin/python",
+      "args": [
+        "/absolute/path/to/mcp-offline-wikipedia/src/mcp_wiki_server.py"
+      ],
+      "env": {
+        "WIKI_ZIM_PATH": "/absolute/path/to/your/downloaded/wikipedia_en_all_mini.zim"
+      }
+    }
+  }
+}
