@@ -1,6 +1,7 @@
 import os
 import sys
 import logging
+import threading
 from bs4 import BeautifulSoup
 from mcp.server.fastmcp import FastMCP
 from libzim.reader import Archive
@@ -8,6 +9,7 @@ from libzim.search import Query, Searcher
 from libzim.suggestion import SuggestionSearcher
 
 # Configure logging to write to stderr.
+# WARNING: MCP uses stdout for JSON-RPC protocol communication. Never print or log to stdout.
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -18,135 +20,208 @@ logger = logging.getLogger("offline-wiki-mcp")
 # Initialize FastMCP Server
 mcp = FastMCP("Offline Wikipedia")
 
-# Read settings from environment variables with safe defaults
+# Read the .zim file path from environment variables
 ZIM_PATH = os.environ.get("WIKI_ZIM_PATH")
-MAX_ARTICLE_CHARS = int(os.environ.get("WIKI_MAX_CHARS", 15000))  # Customizable via env
 
-# Thread-safe global reference
-_archive = None
+# Protect LLM context windows by truncating excessively long articles.
+# Override with WIKI_MAX_CHARS environment variable if needed.
+MAX_ARTICLE_CHARS = int(os.environ.get("WIKI_MAX_CHARS", 15000))
+
+# Thread-safe global reference to avoid re-opening the archive on every tool call
+_archive: Archive | None = None
+_archive_lock = threading.Lock()
 
 
 def get_archive() -> Archive:
-    """Returns the globally loaded ZIM archive instance."""
+    """
+    Lazily opens and returns the ZIM archive (thread-safe).
+    Uses double-checked locking so concurrent calls don't race to initialize.
+    """
     global _archive
     if _archive is None:
-        validate_environment()
-        logger.info(f"Loading ZIM archive into memory: {ZIM_PATH}")
-        _archive = Archive(ZIM_PATH)
+        with _archive_lock:
+            # Re-check inside the lock in case another thread already initialized it
+            if _archive is None:
+                if not ZIM_PATH:
+                    logger.error("WIKI_ZIM_PATH environment variable is not set.")
+                    raise ValueError(
+                        "WIKI_ZIM_PATH is not set. "
+                        "Add it to the 'env' block in your MCP client config."
+                    )
+                if not os.path.exists(ZIM_PATH):
+                    logger.error(f"ZIM archive not found at: {ZIM_PATH}")
+                    raise FileNotFoundError(f"ZIM archive not found at: {ZIM_PATH}")
+
+                logger.info(f"Opening ZIM archive: {ZIM_PATH}")
+                _archive = Archive(ZIM_PATH)
     return _archive
 
 
-def validate_environment():
-    """Validates environment setup immediately to catch configuration mistakes early."""
-    if not ZIM_PATH:
-        logger.error("WIKI_ZIM_PATH environment variable is completely missing.")
-        raise ValueError(
-            "WIKI_ZIM_PATH environment variable is missing. "
-            "Please configure it in your MCP client settings file."
-        )
-    if not os.path.exists(ZIM_PATH):
-        logger.error(f"ZIM archive file not found at path: {ZIM_PATH}")
-        raise FileNotFoundError(f"ZIM archive file not found at: {ZIM_PATH}")
+def _extract_text(html_content: str) -> str:
+    """Parse HTML from a ZIM entry and return clean plain text."""
+    soup = BeautifulSoup(html_content, "html.parser")
+
+    # Remove elements that add noise without useful text
+    for tag in soup(["script", "style", "noscript", "header", "footer", "nav", "sup", "img"]):
+        tag.decompose()
+
+    # strip=True handles leading/trailing whitespace per element
+    raw_text = soup.get_text(separator="\n", strip=True)
+
+    # Drop blank lines
+    lines = [line for line in raw_text.splitlines() if line.strip()]
+    return "\n".join(lines)
+
+
+def _resolve_entry(archive: Archive, path: str) -> tuple[str, str]:
+    """
+    Given a ZIM path, follow any redirects and return (title, clean_text).
+    """
+    entry = archive.get_entry_by_path(path)
+    if entry.is_redirect:
+        entry = entry.get_redirect_entry()
+
+    item = entry.get_item()
+    html_content = bytes(item.content).decode("utf-8", errors="ignore")
+    return entry.title, _extract_text(html_content)
 
 
 @mcp.tool()
-def search_offline_wiki(query: str) -> str:
+def search_wikipedia(query: str, num_results: int = 5) -> str:
     """
-    Search the offline Kiwix Wikipedia (.zim) archive for an article matching the query,
-    extract its plain text content, and return it to provide up-to-date or contextual knowledge.
+    Search the offline Kiwix Wikipedia archive and return a list of matching article titles.
+
+    Call this first to find relevant articles, then use get_article() with a title to read
+    the full content. This two-step approach avoids flooding your context window unnecessarily.
 
     Args:
-        query: The exact search term or article topic to look up.
+        query: The topic or search term to look up (e.g. "black hole", "Python language").
+        num_results: How many results to return. Default is 5, maximum is 10.
     """
-    logger.info(f"Received search query: '{query}'")
+    logger.info(f"search_wikipedia: '{query}', num_results={num_results}")
+    num_results = max(1, min(num_results, 10))  # clamp to valid range
+
+    try:
+        archive = get_archive()
+        found_titles: list[str] = []
+
+        # Strategy 1: Full-text index search (most relevant results)
+        if archive.has_fulltext_index:
+            try:
+                searcher = Searcher(archive)
+                search_op = searcher.search(Query().set_query(query))
+                if search_op.getEstimatedMatches() > 0:
+                    for path in search_op.getResults(0, num_results):
+                        try:
+                            entry = archive.get_entry_by_path(path)
+                            if entry.is_redirect:
+                                entry = entry.get_redirect_entry()
+                            found_titles.append(entry.title)
+                        except Exception:
+                            continue
+                    logger.info(f"Full-text search: {len(found_titles)} result(s).")
+            except Exception as e:
+                logger.warning(f"Full-text search error: {e}")
+
+        # Strategy 2: Title suggestion search (prefix/binary search fallback or supplement)
+        remaining = num_results - len(found_titles)
+        if remaining > 0:
+            try:
+                suggestion_op = SuggestionSearcher(archive).suggest(query)
+                if suggestion_op.getEstimatedMatches() > 0:
+                    for path in suggestion_op.getResults(0, remaining):
+                        try:
+                            entry = archive.get_entry_by_path(path)
+                            if entry.is_redirect:
+                                entry = entry.get_redirect_entry()
+                            if entry.title not in found_titles:
+                                found_titles.append(entry.title)
+                        except Exception:
+                            continue
+                    logger.info(f"Suggestion search topped up results to {len(found_titles)}.")
+            except Exception as e:
+                logger.warning(f"Suggestion search error: {e}")
+
+        if not found_titles:
+            return f"No articles found for '{query}' in the offline archive."
+
+        lines = [f"Found {len(found_titles)} result(s) for '{query}':\n"]
+        for i, title in enumerate(found_titles, 1):
+            lines.append(f"  {i}. {title}")
+        lines.append("\nCall get_article(title) with any of the above titles to read the full article.")
+        return "\n".join(lines)
+
+    except Exception as e:
+        logger.error(f"Unhandled error in search_wikipedia: {e}")
+        return f"An error occurred during search: {e}"
+
+
+@mcp.tool()
+def get_article(title: str) -> str:
+    """
+    Retrieve the full encyclopedic text of a specific Wikipedia article by title.
+
+    If you are unsure of the exact title, call search_wikipedia() first to find it.
+    Note: this is an offline archive and may not reflect the very latest Wikipedia edits.
+
+    Args:
+        title: The Wikipedia article title to fetch (e.g. "Black hole", "Rome").
+    """
+    logger.info(f"get_article: '{title}'")
 
     try:
         archive = get_archive()
         path = None
 
-        # Strategy 1: Attempt Full-Text Index Search
-        if archive.has_fulltext_index:
-            try:
-                searcher = Searcher(archive)
-                search_query = Query().set_query(query)
-                search_operation = searcher.search(search_query)
+        # Strategy 1: Title suggestion search (best for exact/near-exact title lookup)
+        try:
+            suggestion_op = SuggestionSearcher(archive).suggest(title)
+            if suggestion_op.getEstimatedMatches() > 0:
+                results = list(suggestion_op.getResults(0, 1))
+                if results:
+                    path = results[0]
+                    logger.info("Article path found via suggestion search.")
+        except Exception as e:
+            logger.warning(f"Suggestion search error in get_article: {e}")
 
-                if search_operation.getEstimatedMatches() > 0:
-                    results = list(search_operation.getResults(0, 1))
+        # Strategy 2: Full-text search fallback
+        if not path and archive.has_fulltext_index:
+            try:
+                search_op = Searcher(archive).search(Query().set_query(title))
+                if search_op.getEstimatedMatches() > 0:
+                    results = list(search_op.getResults(0, 1))
                     if results:
                         path = results[0]
-                        logger.info("Match found via full-text index.")
-            except Exception as search_err:
-                logger.warning(f"Full-text indexing error: {search_err}")
-
-        # Strategy 2: Fallback to Title Suggestion Search (Prefix/binary search)
-        if not path:
-            try:
-                suggestion_searcher = SuggestionSearcher(archive)
-                suggestion_operation = suggestion_searcher.suggest(query)
-                if suggestion_operation.getEstimatedMatches() > 0:
-                    results = list(suggestion_operation.getResults(0, 1))
-                    if results:
-                        path = results[0]
-                        logger.info("Match found via suggestion/title search.")
-            except Exception as sug_err:
-                logger.warning(f"Title suggestion search error: {sug_err}")
+                        logger.info("Article path found via full-text search fallback.")
+            except Exception as e:
+                logger.warning(f"Full-text search error in get_article: {e}")
 
         if not path:
-            logger.info(f"No match found for query: '{query}'")
-            return f"No articles found matching the query: '{query}' in the offline archive."
+            return (
+                f"Article '{title}' was not found in the offline archive. "
+                f"Try search_wikipedia('{title}') to find similar titles."
+            )
 
-        # Fetch the entry from the path pointer
-        entry = archive.get_entry_by_path(path)
-
-        # Follow redirects seamlessly
-        if entry.is_redirect:
-            entry = entry.get_redirect_entry()
-
-        logger.info(f"Extracting content for article: {entry.title}")
-
-        # Extract raw HTML content
-        item = entry.get_item()
-        html_content = bytes(item.content).decode("utf-8", errors="ignore")
-
-        # Parse and clean up the HTML into readable plain text
-        soup = BeautifulSoup(html_content, "html.parser")
-
-        # Remove noisy elements that bloat context windows or provide no text value
-        for element in soup(["script", "style", "noscript", "header", "footer", "nav", "table", "sup", "img"]):
-            element.decompose()
-
-        raw_text = soup.get_text(separator="\n")
-
-        # Normalize text
-        lines = (line.strip() for line in raw_text.splitlines())
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        clean_text = "\n".join(chunk for chunk in chunks if chunk)
+        article_title, clean_text = _resolve_entry(archive, path)
 
         if not clean_text.strip():
-            logger.warning(f"Article '{entry.title}' returned empty text.")
-            return f"Article '{entry.title}' was found, but contains no readable text content."
+            return f"Article '{article_title}' was found but contains no readable text."
 
-        # Truncate to prevent context window overflows
         if len(clean_text) > MAX_ARTICLE_CHARS:
-            clean_text = clean_text[:MAX_ARTICLE_CHARS] + "\n\n...[Content truncated for length]..."
+            clean_text = (
+                clean_text[:MAX_ARTICLE_CHARS]
+                + "\n\n...[Content truncated. Set WIKI_MAX_CHARS env var to increase the limit.]"
+            )
 
-        logger.info("Successfully processed and returning article text.")
-        return f"=== Wikipedia Archive Result: {entry.title} ===\n\n{clean_text}"
+        logger.info(f"Returning '{article_title}' ({len(clean_text)} chars).")
+        return f"=== Wikipedia: {article_title} ===\n\n{clean_text}"
 
     except Exception as e:
-        logger.error(f"Unhandled exception during tool execution: {str(e)}")
-        return f"An error occurred while executing the lookup: {str(e)}"
+        logger.error(f"Unhandled error in get_article: {e}")
+        return f"An error occurred retrieving the article: {e}"
 
 
 if __name__ == "__main__":
     logger.info("Starting Offline Wikipedia MCP Server...")
-
-    # Fail fast if environment is misconfigured before running the standard I/O loop
-    try:
-        validate_environment()
-    except Exception as env_err:
-        logger.critical(f"Initialization failure: {env_err}")
-        sys.exit(1)
-
+    # Communicates via stdio (stdin/stdout), as required by the MCP protocol
     mcp.run()
