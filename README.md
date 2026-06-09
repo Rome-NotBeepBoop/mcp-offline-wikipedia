@@ -4,14 +4,16 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 [![MCP SDK](https://img.shields.io/badge/MCP-SDK-green.svg)](https://github.com/modelcontextprotocol/python-sdk)
 
-A fast, completely offline [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that connects local or cloud LLMs to locally downloaded Kiwix Wikipedia archives (`.zim` files).
+A fast, completely offline [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that connects local or cloud LLMs to locally downloaded Kiwix archives (`.zim` files).
 
-This project bridges the gap between Large Language Models (running locally in **LM Studio**, **Claude Desktop**, or **Cursor**) and massive offline knowledge bases. By using the official Python MCP SDK and `libzim`, your LLM can search and read full Wikipedia articles **without an internet connection**.
+This project bridges the gap between Large Language Models (running locally in **LM Studio**, **Claude Desktop**, or **Cursor**) and massive offline knowledge bases. By using the official Python MCP SDK and `libzim`, your LLM can search and read full Wikipedia articles — and any other Kiwix archive — **without an internet connection**.
 
 ## ✨ Features
 
 - 🔍 **Smart search** — uses full-text index search with automatic fallback to title/prefix search
+- 📚 **Multi-archive support** — point at a folder and every `.zim` file inside is loaded automatically
 - 📄 **Direct article lookup** — retrieve a specific article by exact title, bypassing search
+- 🏷️ **Source labelling** — results show which archive they came from (e.g. `[wikipedia_en_wp1-0.8_nopic_2026-04]`)
 - 🧹 **Clean output** — strips HTML, scripts, tables, citation numbers `[1]`, and `[edit]` markers
 - ✂️ **Configurable truncation** — prevent context-window overflows with `WIKI_MAX_CHARS`
 - 🔒 **Thread-safe** — double-checked locking for safe use in concurrent MCP environments
@@ -21,18 +23,20 @@ This project bridges the gap between Large Language Models (running locally in *
 
 | Tool | Description |
 |---|---|
-| `search_wikipedia(query, num_results)` | Search the archive using full-text index with fallback to title/prefix search |
-| `get_article(title)` | Fetch a specific article by its exact title |
+| `search_wikipedia(query, num_results)` | Search all loaded archives using full-text index with fallback to title/prefix search |
+| `get_article(title)` | Fetch a specific article by its exact title, searching across all loaded archives |
 
-## 📥 Step 1 — Download a Wikipedia `.zim` Archive
+## 📥 Step 1 — Download Kiwix `.zim` Archives
 
-Because LLMs only process text, it is highly recommended to download a **"mini"** or **"nopic"** (no pictures) version to save massive amounts of disk space.
+Because LLMs only process text, it is highly recommended to download **"nopic"** (no pictures) versions to save disk space.
 
 1. Go to the **Kiwix Library**: [https://library.kiwix.org/?lang=eng&q=wikipedia](https://library.kiwix.org/?lang=eng&q=wikipedia)
 2. Recommended files:
-   - **Wikipedia English (Mini)** — text, lists, and tables. No images. (~10–15 GB)
-   - **Wikipedia English (Maxi)** — full Wikipedia with images. (~100 GB+)
-3. Save the `.zim` file to a **permanent path** on your computer (you'll reference it in the config below).
+   - **Wikipedia English (wp1/Mini, nopic)** — most important articles, no images (~2 GB)
+   - **Wikipedia English (Maxi, nopic)** — full Wikipedia, no images (~22 GB)
+3. Save all `.zim` files into a single dedicated folder (e.g. `~/kiwix-zim/`). The server will load every `.zim` file in that folder automatically.
+
+> ⚠️ **macOS users:** Do **not** store your `.zim` files inside `~/Documents`, `~/Desktop`, or `~/Downloads`. macOS restricts app access to those folders and will cause an `Error opening ZIM file`. Use your home directory or a custom folder instead (e.g. `~/kiwix-zim/`).
 
 ## 🚀 Step 2 — Installation
 
@@ -50,7 +54,9 @@ pip install -r requirements.txt
 
 ## ⚙️ Step 3 — Configure Your MCP Client
 
-You need to tell your MCP client (Claude Desktop, Cursor, etc.) where the server script and your `.zim` file are. Replace the example paths below with your actual paths.
+Replace the example paths below with your actual paths.
+
+> ⚠️ **Always use the full path to the venv Python** (`venv/bin/python`), not the system `python3`. This guarantees the correct `libzim` version is used.
 
 ### Claude Desktop
 
@@ -63,7 +69,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
       "command": "/absolute/path/to/mcp-offline-wikipedia/venv/bin/python",
       "args": ["/absolute/path/to/mcp-offline-wikipedia/mcp_wiki_server.py"],
       "env": {
-        "WIKI_ZIM_PATH": "/absolute/path/to/your/wikipedia.zim",
+        "WIKI_ZIM_DIR": "/absolute/path/to/your/kiwix-zim/",
         "WIKI_MAX_CHARS": "15000"
       }
     }
@@ -73,16 +79,16 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 
 ### Cursor
 
-Add the following to your Cursor MCP config (`.cursor/mcp.json` in your project, or the global config):
+Add the following to your Cursor MCP config (`.cursor/mcp.json`):
 
 ```json
 {
   "mcpServers": {
     "offline-wikipedia": {
-      "command": "/absolute/path/to/venv/bin/python",
-      "args": ["/absolute/path/to/mcp_wiki_server.py"],
+      "command": "/absolute/path/to/mcp-offline-wikipedia/venv/bin/python",
+      "args": ["/absolute/path/to/mcp-offline-wikipedia/mcp_wiki_server.py"],
       "env": {
-        "WIKI_ZIM_PATH": "/absolute/path/to/wikipedia.zim"
+        "WIKI_ZIM_DIR": "/absolute/path/to/your/kiwix-zim/"
       }
     }
   }
@@ -91,7 +97,8 @@ Add the following to your Cursor MCP config (`.cursor/mcp.json` in your project,
 
 ### LM Studio
 
-In LM Studio, go to **Developer → mcp.json →** and fill in:
+In LM Studio, go to **Developer → mcp.json** and fill in:
+
 ```json
 {
   "mcpServers": {
@@ -99,7 +106,7 @@ In LM Studio, go to **Developer → mcp.json →** and fill in:
       "command": "/absolute/path/to/mcp-offline-wikipedia/venv/bin/python",
       "args": ["/absolute/path/to/mcp-offline-wikipedia/mcp_wiki_server.py"],
       "env": {
-        "WIKI_ZIM_PATH": "/absolute/path/to/your/wikipedia.zim",
+        "WIKI_ZIM_DIR": "/absolute/path/to/your/kiwix-zim/",
         "WIKI_MAX_CHARS": "15000"
       }
     }
@@ -107,39 +114,40 @@ In LM Studio, go to **Developer → mcp.json →** and fill in:
 }
 ```
 
-> ⚠️ **Important:** Always use the full path to the **venv Python** (`venv/bin/python`), not the system `python3`. This guarantees the correct `libzim` version is used and avoids "Error opening ZIM file" caused by the wrong Python environment.
-
 ## 🌍 Environment Variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `WIKI_ZIM_PATH` | ✅ Yes | — | Absolute path to your `.zim` archive |
+| `WIKI_ZIM_DIR` | ✅ Preferred | — | Path to a folder — every `.zim` file inside is loaded |
+| `WIKI_ZIM_PATH` | Legacy | — | Path to a single `.zim` file (use `WIKI_ZIM_DIR` instead) |
 | `WIKI_MAX_CHARS` | No | `15000` | Max characters returned per article |
+
+> `WIKI_ZIM_DIR` takes priority over `WIKI_ZIM_PATH` if both are set.
 
 ## ❓ Troubleshooting
 
-**`WIKI_ZIM_PATH environment variable is missing`**
-→ Make sure the `env` block is present in your MCP client config with the correct path.
+**`Neither WIKI_ZIM_DIR nor WIKI_ZIM_PATH is set`**
+→ Make sure the `env` block is present in your MCP client config with the correct variable name.
 
 **`ZIM archive not found at: ...`**
-→ Double-check the path. On Windows, use forward slashes or escaped backslashes: `C:/Users/you/wiki.zim`.
-
-**Server starts but the LLM says it can't find any articles**
-→ Some `.zim` files don't have a full-text index. The server will automatically fall back to title search, but results may be less accurate for vague queries. Try using the exact article title.
+→ Double-check the path. On Windows, use forward slashes or escaped backslashes: `C:/Users/you/kiwix-zim/`.
 
 **macOS: `Error opening ZIM file` even though the file exists and the path is correct**
-→ macOS restricts app access to `~/Documents`, `~/Desktop`, and `~/Downloads` without explicit user permission. LM Studio (and the Python process it spawns) may be silently blocked from reading your `.zim` file if it lives there. Two fixes:
-- **Quick fix:** Move the `.zim` file to your home directory (`~/`) or any other unrestricted location, and update `WIKI_ZIM_PATH` accordingly.
-- **Proper fix:** Go to **System Settings → Privacy & Security → Files and Folders** and grant LM Studio access to the folder containing your `.zim` file.
+→ macOS restricts app access to `~/Documents`, `~/Desktop`, and `~/Downloads` without explicit permission. LM Studio (and the Python process it spawns) may be silently blocked. Two fixes:
+- **Quick fix:** Move your `.zim` files to `~/kiwix-zim/` or any other folder you created yourself, and update `WIKI_ZIM_DIR` accordingly.
+- **Proper fix:** Go to **System Settings → Privacy & Security → Files and Folders** and grant LM Studio access to the folder containing your `.zim` files.
 
-**`Error opening ZIM file` — but the file path is correct and it opens fine in a Python terminal**
-→ LM Studio is likely using a different Python than the one where you installed `libzim`. Always point the `command` in your MCP config to the **venv Python** (`venv/bin/python`), not the system `python3`. This ensures the right `libzim` version (3.10.0+) is used. Verify with:
+**`Error opening ZIM file` — but the file opens fine in a Python terminal**
+→ LM Studio is using a different Python than your terminal. Always use the **venv Python** in your MCP config (`venv/bin/python`), not the system `python3`. Verify it has the right libzim:
 ```bash
 /absolute/path/to/venv/bin/python -c "import libzim; print('ok')"
 ```
 
+**Server starts but the LLM says it can't find any articles**
+→ Some `.zim` files don't have a full-text index. The server will automatically fall back to title search, but results may be less accurate for vague queries. Try using the exact article title.
+
 **High memory usage**
-→ The `.zim` archive is loaded into memory on first use. Larger archives (Maxi) will use more RAM. The Mini/nopic version is recommended for most use cases.
+→ Each `.zim` archive is loaded on first use. Larger archives (Maxi) will use more RAM. The Mini/nopic version is recommended for most use cases.
 
 ## 🤝 Contributing
 
