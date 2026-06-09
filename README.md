@@ -21,8 +21,8 @@ This project bridges the gap between Large Language Models (running locally in *
 
 | Tool | Description |
 |---|---|
-| `search_offline_wiki(query)` | Fuzzy-search the archive for the best matching article |
-| `get_offline_wiki_article(title)` | Fetch a specific article by its exact title |
+| `search_wikipedia(query, num_results)` | Search the archive using full-text index with fallback to title/prefix search |
+| `get_article(title)` | Fetch a specific article by its exact title |
 
 ## 📥 Step 1 — Download a Wikipedia `.zim` Archive
 
@@ -92,11 +92,12 @@ Add the following to your Cursor MCP config (`.cursor/mcp.json` in your project,
 ### LM Studio
 
 In LM Studio, go to **Developer → mcp.json →** and fill in:
-```bash {
+```json
+{
   "mcpServers": {
     "offline-wikipedia": {
-      "command": "/absolute/path/to/mcp-offline-wikipedia/.venv/bin/python",
-      "args": ["/absolute/path/to/mcp-offline-wikipedia/src/mcp_wiki_server.py"],
+      "command": "/absolute/path/to/mcp-offline-wikipedia/venv/bin/python",
+      "args": ["/absolute/path/to/mcp-offline-wikipedia/mcp_wiki_server.py"],
       "env": {
         "WIKI_ZIM_PATH": "/absolute/path/to/your/wikipedia.zim",
         "WIKI_MAX_CHARS": "15000"
@@ -105,6 +106,8 @@ In LM Studio, go to **Developer → mcp.json →** and fill in:
   }
 }
 ```
+
+> ⚠️ **Important:** Always use the full path to the **venv Python** (`venv/bin/python`), not the system `python3`. This guarantees the correct `libzim` version is used and avoids "Error opening ZIM file" caused by the wrong Python environment.
 
 ## 🌍 Environment Variables
 
@@ -123,6 +126,17 @@ In LM Studio, go to **Developer → mcp.json →** and fill in:
 
 **Server starts but the LLM says it can't find any articles**
 → Some `.zim` files don't have a full-text index. The server will automatically fall back to title search, but results may be less accurate for vague queries. Try using the exact article title.
+
+**macOS: `Error opening ZIM file` even though the file exists and the path is correct**
+→ macOS restricts app access to `~/Documents`, `~/Desktop`, and `~/Downloads` without explicit user permission. LM Studio (and the Python process it spawns) may be silently blocked from reading your `.zim` file if it lives there. Two fixes:
+- **Quick fix:** Move the `.zim` file to your home directory (`~/`) or any other unrestricted location, and update `WIKI_ZIM_PATH` accordingly.
+- **Proper fix:** Go to **System Settings → Privacy & Security → Files and Folders** and grant LM Studio access to the folder containing your `.zim` file.
+
+**`Error opening ZIM file` — but the file path is correct and it opens fine in a Python terminal**
+→ LM Studio is likely using a different Python than the one where you installed `libzim`. Always point the `command` in your MCP config to the **venv Python** (`venv/bin/python`), not the system `python3`. This ensures the right `libzim` version (3.10.0+) is used. Verify with:
+```bash
+/absolute/path/to/venv/bin/python -c "import libzim; print('ok')"
+```
 
 **High memory usage**
 → The `.zim` archive is loaded into memory on first use. Larger archives (Maxi) will use more RAM. The Mini/nopic version is recommended for most use cases.
