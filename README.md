@@ -67,7 +67,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
   "mcpServers": {
     "offline-wikipedia": {
       "command": "/absolute/path/to/mcp-offline-wikipedia/venv/bin/python",
-      "args": ["/absolute/path/to/mcp-offline-wikipedia/mcp_wiki_server.py"],
+      "args": ["/absolute/path/to/mcp-offline-wikipedia/src/mcp-wiki-server.py"],
       "env": {
         "WIKI_ZIM_DIR": "/absolute/path/to/your/kiwix-zim/",
         "WIKI_MAX_CHARS": "15000"
@@ -86,13 +86,24 @@ Add the following to your Cursor MCP config (`.cursor/mcp.json`):
   "mcpServers": {
     "offline-wikipedia": {
       "command": "/absolute/path/to/mcp-offline-wikipedia/venv/bin/python",
-      "args": ["/absolute/path/to/mcp-offline-wikipedia/mcp_wiki_server.py"],
+      "args": ["/absolute/path/to/mcp-offline-wikipedia/src/mcp-wiki-server.py"],
       "env": {
         "WIKI_ZIM_DIR": "/absolute/path/to/your/kiwix-zim/"
       }
     }
   }
 }
+```
+
+### Claude Code
+
+Add using the `claude mcp add` CLI command (`--scope user` for global access across all projects, or `--scope project` for the current project):
+
+```bash
+claude mcp add --scope user offline-wikipedia \
+  -e WIKI_ZIM_DIR=/absolute/path/to/your/kiwix-zim/ \
+  -e WIKI_MAX_CHARS=15000 \
+  -- /absolute/path/to/mcp-offline-wikipedia/venv/bin/python /absolute/path/to/mcp-offline-wikipedia/src/mcp-wiki-server.py
 ```
 
 ### LM Studio
@@ -104,7 +115,7 @@ In LM Studio, go to **Developer → mcp.json** and fill in:
   "mcpServers": {
     "offline-wikipedia": {
       "command": "/absolute/path/to/mcp-offline-wikipedia/venv/bin/python",
-      "args": ["/absolute/path/to/mcp-offline-wikipedia/mcp_wiki_server.py"],
+      "args": ["/absolute/path/to/mcp-offline-wikipedia/src/mcp-wiki-server.py"],
       "env": {
         "WIKI_ZIM_DIR": "/absolute/path/to/your/kiwix-zim/",
         "WIKI_MAX_CHARS": "15000"
@@ -113,6 +124,17 @@ In LM Studio, go to **Developer → mcp.json** and fill in:
   }
 }
 ```
+
+## 🧠 Agent Skill
+
+This repository includes a self-contained **Agent Skill** (`skills/offline-wikipedia/`) conforming to the [Agent Skills standard](https://agentskills.io/).
+
+The skill enables AI agents to:
+1. **Automate installation and configuration** of this open-source MCP server across supported clients (Claude Desktop, Cursor, Claude Code, LM Studio).
+2. **Coach tool usage** with optimal two-step retrieval (`search_wikipedia` → clean title → `get_article`), keyword query formulation, and context management.
+
+Requirements: Python 3.10+, git, and an agent environment with shell access (manual setup instructions are provided for chat-only clients like LM Studio).
+
 
 ## 🌍 Environment Variables
 

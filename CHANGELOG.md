@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-11-02
+### Fixed
+- Corrected server script paths in README.md from `mcp_wiki_server.py` to `src/mcp-wiki-server.py`.
+- Added self-contained agent skill for automated installation and retrieval coaching.
+
 ## [1.1.0] - 2026-06-09
 ### Added
 - **Multi-archive support** — set `WIKI_ZIM_DIR` to a folder and every `.zim` file inside is loaded and searched automatically. No config changes needed when adding new archives — just drop a new `.zim` file in the folder.
