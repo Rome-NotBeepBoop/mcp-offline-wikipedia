@@ -92,17 +92,17 @@ On macOS, transparency, consent, and control (TCC) restrictions prevent sandboxe
 
 ### 4. Clone Repo & Set Up Virtual Environment
 
-Clone the repository at pinned release tag `v1.1.1` into a permanent location (default: `~/.local/share/mcp-offline-wikipedia` or user-specified folder):
+Clone the repository at pinned release tag `v1.1.2` into a permanent location (default: `~/.local/share/mcp-offline-wikipedia` or user-specified folder):
 
 ```bash
 INSTALL_DIR="$HOME/.local/share/mcp-offline-wikipedia"
 mkdir -p "$(dirname "$INSTALL_DIR")"
 
-git clone --branch v1.1.1 --depth 1 https://github.com/Rome-NotBeepBoop/mcp-offline-wikipedia.git "$INSTALL_DIR"
+git clone --branch v1.1.2 --depth 1 https://github.com/Rome-NotBeepBoop/mcp-offline-wikipedia.git "$INSTALL_DIR"
 ```
 
 > [!CRITICAL]
-> If the `git clone` command fails (for example, if the release tag `v1.1.1` has not yet been pushed to GitHub), **STOP immediately and inform the user**. Do not silently fall back to other branches without user knowledge.
+> If the `git clone` command fails (for example, if the release tag `v1.1.2` has not yet been pushed to GitHub), **STOP immediately and inform the user**. Do not silently fall back to other branches without user knowledge.
 
 Once cloned:
 ```bash
@@ -237,7 +237,7 @@ For Windows users or clients without command execution capabilities (e.g., LM St
 
 1. **Terminal setup:** Open your terminal and run:
    ```bash
-   git clone --branch v1.1.1 --depth 1 https://github.com/Rome-NotBeepBoop/mcp-offline-wikipedia.git
+   git clone --branch v1.1.2 --depth 1 https://github.com/Rome-NotBeepBoop/mcp-offline-wikipedia.git
    cd mcp-offline-wikipedia
    python -m venv venv
    # On macOS/Linux:
